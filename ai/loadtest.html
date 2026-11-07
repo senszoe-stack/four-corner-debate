@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>四角辯論｜壓力測試</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- 和教師端、學生端共用同一份設定 -->
+  <script src="config.js"></script>
+  <script src="shared.js"></script>
+  <style>
+    :root { --ink:#4A3B52; --line:#E6C7A6; --bg:#F6EBD9; --ok:#2F8F63; --warn:#B8760F; --bad:#C2506B; }
+    * { box-sizing: border-box; }
+    body { margin:0; padding:24px; font-family:'Noto Sans TC',system-ui,sans-serif; color:var(--ink); background:var(--bg); line-height:1.6; }
+    .wrap { max-width:960px; margin:0 auto; }
+    h1 { margin:0 0 4px; font-size:28px; }
+    .card { background:#fff; border:2px solid var(--line); border-radius:20px; padding:18px 22px; margin-top:16px; }
+    .warn { background:#FFF1D6; border-color:#F2B766; }
+    label { display:inline-flex; flex-direction:column; font-size:13px; margin-right:18px; margin-bottom:8px; }
+    input { font-size:17px; padding:8px 12px; border:2px solid var(--line); border-radius:12px; width:150px; }
+    button { font-size:17px; font-weight:700; padding:10px 22px; border:0; border-radius:999px; background:#8FD6B1; color:#3F3447; cursor:pointer; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    button.sub { background:#F1ECF4; }
+    table { width:100%; border-collapse:collapse; margin-top:6px; font-size:15px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #F0E2D0; vertical-align:top; }
+    th { font-size:13px; color:#7a6a82; }
+    td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .ok { color:var(--ok); font-weight:700; } .warnc { color:var(--warn); font-weight:700; } .bad { color:var(--bad); font-weight:700; }
+    pre { margin:0; max-height:300px; overflow:auto; font-size:13px; background:#2d2433; color:#f3e9f7; padding:14px; border-radius:14px; white-space:pre-wrap; }
+    #verdict { font-size:20px; font-weight:800; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔬 四角辯論｜壓力測試</h1>
+  <p>模擬 1 位老師 + 多位學生同時操作：登入連線、送出理由、開放投票、投票、定期補抓狀態、清除資料。</p>
+  <p id="topicInfo" style="margin:0;color:#7a6a82"></p>
+  <div id="configWarn" class="card warn" hidden style="font-weight:700"></div>
+
+  <div class="card warn">
+    <b>⚠️ 開始前請注意</b>
+    <ul style="margin:6px 0 0 18px; padding:0">
+      <li>連線資訊、議題、四個立場都讀取同資料夾的 <code>config.js</code>，不用另外設定。</li>
+      <li>測試會<b>清空並使用下方的「測試班級」</b>，請不要填真實班級名稱。</li>
+      <li>測試只會清除「本議題（config.js 的 TOPIC_ID）＋測試班級」的資料，其他議題不受影響。</li>
+      <li>測試前請先在 Supabase 執行過 <code>schema.sql</code>，否則會顯示失敗。</li>
+      <li>所有模擬學生都在同一台電腦同一個分頁裡跑，測的是 Supabase 的承載與延遲；平板本身的效能不在測試範圍。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <label>測試班級<input id="cfgClass" value="壓測班" /></label>
+    <label>學生人數<input id="cfgN" type="number" min="1" max="150" value="30" /></label>
+    <label>思考時間上限（秒）<input id="cfgThink" type="number" min="0" max="30" value="3" /></label>
+    <div style="margin-top:6px">
+      <button id="runBtn">▶ 開始測試</button>
+      <button id="copyBtn" class="sub" hidden>📋 複製結果</button>
+      <span id="status" style="margin-left:12px"></span>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" hidden>
+    <div id="verdict"></div>
+    <table>
+      <thead><tr><th>階段</th><th>成功</th><th class="num">中位數</th><th class="num">95%</th><th class="num">最慢</th><th>判定與說明</th></tr></thead>
+      <tbody id="resBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card"><pre id="log">尚未開始。</pre></div>
+</div>
+
+<script>
+/* =====================================================================
+ * 設定全部來自 config.js（與教師端、學生端相同）
+ * ===================================================================== */
+const CFG = window.DEBATE_CONFIG;
+const PROBLEMS = validateConfig(CFG);
+const CONFIGURED = PROBLEMS.length === 0;
+const TOPIC_ID = CFG.TOPIC_ID;
+const AGREE = CFG.VOTE.agree, DISAGREE = CFG.VOTE.disagree;
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const rand = (a, b) => a + Math.random() * (b - a);
+const now = () => performance.now();
+const ISLANDS = CFG.ISLANDS.map((i) => i.key);
+
+function mk() {
+  return supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+  const el = $('log');
+  el.textContent += `[${t}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- 統計 ---------- */
+function stats(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const pick = (p) => s[Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))];
+  return { n: s.length, p50: pick(50), p95: pick(95), max: s[s.length - 1] };
+}
+const fmt = (ms) => (ms == null ? '—' : ms >= 1000 ? (ms / 1000).toFixed(2) + ' 秒' : Math.round(ms) + ' ms');
+
+async function waitUntil(cond, timeoutMs) {
+  const t0 = now();
+  while (now() - t0 < timeoutMs) {
+    if (cond()) return true;
+    await sleep(100);
+  }
+  return cond();
+}
+
+function subscribe(ch, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const t0 = now();
+    const to = setTimeout(() => reject(new Error('連線逾時')), timeoutMs);
+    ch.subscribe((st) => {
+      if (st === 'SUBSCRIBED') { clearTimeout(to); resolve(now() - t0); }
+      else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') { clearTimeout(to); reject(new Error(st)); }
+    });
+  });
+}
+
+/* ---------- 結果表 ---------- */
+const rows = [];
+function addRow(stage, okN, total, arr, note, level, overrideCols) {
+  const st = stats(arr || []);
+  rows.push({ stage, okN, total, st, note, level });
+  const tr = document.createElement('tr');
+  const cls = level === 'ok' ? 'ok' : level === 'warn' ? 'warnc' : 'bad';
+  const mark = level === 'ok' ? '✅' : level === 'warn' ? '⚠️' : '❌';
+  const cells = [
+    [stage, ''],
+    [total == null ? '—' : `${okN} / ${total}`, 'num'],
+    [st ? fmt(st.p50) : '—', 'num'],
+    [st ? fmt(st.p95) : '—', 'num'],
+    [st ? fmt(st.max) : '—', 'num'],
+    [`${mark} ${note}`, cls],
+  ];
+  cells.forEach(([text, c]) => {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (c) td.className = c;
+    tr.appendChild(td);
+  });
+  $('resBody').appendChild(tr);
+}
+
+/* 依延遲判定等級（毫秒） */
+function levelByLatency(st, okN, total, warnMs, badMs) {
+  if (okN < total) return 'bad';
+  if (!st) return 'bad';
+  if (st.p95 > badMs) return 'bad';
+  if (st.p95 > warnMs) return 'warn';
+  return 'ok';
+}
+
+/* ---------- 測試資料 ---------- */
+function makeReason(seat) {
+  let r = String(CFG.TEST_REASON || '這是壓力測試的理由，第 {seat} 號同學的想法。').replace(/\{seat\}/g, seat);
+  while (r.length < (CFG.MIN_REASON || 1)) r += '（補充說明）';
+  return r.slice(0, Math.max(CFG.MAX_REASON || 120, CFG.MIN_REASON || 1));
+}
+
+async function wipe(db, cls) {
+  const a = await db.from('arguments').delete().eq('topic', TOPIC_ID).eq('class_name', cls);
+  const v = await db.from('votes').delete().eq('topic', TOPIC_ID).eq('class_name', cls);
+  const s = await db.from('system_status').upsert({ topic: TOPIC_ID, class_name: cls, voting_open: false, updated_at: new Date().toISOString() }, { onConflict: 'topic,class_name' });
+  const [ca, cv] = await Promise.all([
+    db.from('arguments').select('id', { count: 'exact', head: true }).eq('topic', TOPIC_ID).eq('class_name', cls),
+    db.from('votes').select('id', { count: 'exact', head: true }).eq('topic', TOPIC_ID).eq('class_name', cls),
+  ]);
+  const err = a.error || v.error || s.error;
+  return { ok: !err && !(ca.count > 0) && !(cv.count > 0), left: (ca.count || 0) + (cv.count || 0), err };
+}
+
+/* =====================================================================
+ * 主流程
+ * ===================================================================== */
+async function runTest() {
+  const cls = $('cfgClass').value.trim();
+  const N = Math.max(1, Math.min(150, parseInt($('cfgN').value, 10) || 30));
+  const think = Math.max(0, parseFloat($('cfgThink').value) || 0) * 1000;
+
+  if (!cls) { alert('請填入測試班級名稱'); return; }
+  if (/^[一二三四五六]年.班$/.test(cls) &&
+      !confirm(`「${cls}」看起來像真實班級，測試會清空它的資料。確定要繼續嗎？`)) return;
+
+  $('runBtn').disabled = true;
+  $('copyBtn').hidden = true;
+  $('resultCard').hidden = false;
+  $('resBody').innerHTML = '';
+  $('verdict').textContent = '測試進行中…';
+  $('log').textContent = '';
+  rows.length = 0;
+  window.__loadtestDone = false;
+
+  const channels = [];
+  const filter = `class_name=eq.${cls}`;
+  try {
+    log(`測試班級「${cls}」，模擬 ${N} 位學生 + 1 位老師`);
+    $('status').textContent = '清理舊資料…';
+    const admin = mk();
+    const w0 = await wipe(admin, cls);
+    if (!w0.ok) log(`⚠️ 測試前清理沒有完全成功（剩 ${w0.left} 筆）${w0.err ? '：' + explainErr(w0.err) : ''}。若之後項目失敗，請先在 Supabase 執行 schema.sql。`);
+
+    /* ---- 1. 老師端連線 ---- */
+    $('status').textContent = '老師端連線…';
+    const teacher = mk();
+    const tArgAt = {}, tVoteAt = {};
+    const tch = teacher.channel('lt-teacher-' + Date.now())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'arguments', filter }, (p) => { if (p.new && p.new.topic === TOPIC_ID) tArgAt[p.new.seat] = now(); })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'votes', filter }, (p) => { if (p.new && p.new.topic === TOPIC_ID) tVoteAt[p.new.seat] = now(); });
+    channels.push([teacher, tch]);
+    let teacherOk = true, teacherMs = null;
+    try { teacherMs = await subscribe(tch); } catch (e) { teacherOk = false; log('❌ 老師端連線失敗：' + e.message); }
+    addRow('老師端即時連線', teacherOk ? 1 : 0, 1, teacherMs != null ? [teacherMs] : [],
+      teacherOk ? '老師端成功訂閱' : '老師端連線失敗，新理由不會即時出現', teacherOk ? 'ok' : 'bad');
+
+    /* ---- 2. 學生同時登入（連線） ---- */
+    $('status').textContent = `${N} 位學生連線中…`;
+    const S = Array.from({ length: N }, (_, i) => ({
+      seat: i + 1, name: '測試生' + (i + 1), db: mk(), ok: false, statusLog: [],
+    }));
+    await Promise.all(S.map(async (s) => {
+      await sleep(rand(0, 2000)); // 模擬進教室後陸續登入
+      s.ch = s.db.channel('lt-s-' + s.seat + '-' + Date.now())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'system_status', filter }, (p) => {
+          if (p.new && p.new.topic === TOPIC_ID) s.statusLog.push({ open: !!p.new.voting_open, t: now() });
+        });
+      channels.push([s.db, s.ch]);
+      try { s.connectMs = await subscribe(s.ch); s.ok = true; } catch (e) { s.err = e.message; }
+    }));
+    const connected = S.filter((s) => s.ok);
+    const cSt = stats(connected.map((s) => s.connectMs));
+    addRow('學生同時登入（即時連線）', connected.length, N, connected.map((s) => s.connectMs),
+      connected.length === N ? '全部連線成功' : `${N - connected.length} 位連線失敗：${[...new Set(S.filter((s) => !s.ok).map((s) => s.err))].join('、')}`,
+      levelByLatency(cSt, connected.length, N, 3000, 8000));
+    log(`連線完成：${connected.length}/${N}`);
+
+    /* ---- 3. 學生同時送出理由 ---- */
+    $('status').textContent = '學生送出理由…';
+    const argStart = {}, argLat = [], argErr = [];
+    await Promise.all(S.map(async (s) => {
+      await sleep(rand(0, think));
+      argStart[s.seat] = now();
+      const { error } = await s.db.from('arguments').insert({
+        topic: TOPIC_ID, class_name: cls, seat: s.seat, name: s.name, island: ISLANDS[s.seat % 4], reason: makeReason(s.seat),
+      });
+      if (error) argErr.push(explainErr(error)); else { argLat.push(now() - argStart[s.seat]); s.argDone = true; }
+    }));
+    const argOk = S.filter((s) => s.argDone).length;
+    addRow('學生同時送出理由（寫入資料庫）', argOk, N, argLat,
+      argOk === N ? '全部寫入成功' : `失敗 ${N - argOk} 筆：${[...new Set(argErr)].slice(0, 2).join('；')}`,
+      levelByLatency(stats(argLat), argOk, N, 1500, 4000));
+
+    if (teacherOk) {
+      await waitUntil(() => Object.keys(tArgAt).length >= argOk, 15000);
+      const dLat = S.filter((s) => s.argDone && tArgAt[s.seat]).map((s) => tArgAt[s.seat] - argStart[s.seat]);
+      addRow('老師端即時收到理由（含寫入時間）', dLat.length, argOk, dLat,
+        dLat.length === argOk ? '老師大螢幕會即時顯示所有理由' : `漏收 ${argOk - dLat.length} 則（需重新整理才看得到）`,
+        levelByLatency(stats(dLat), dLat.length, argOk, 2000, 5000));
+    }
+
+    /* ---- 4. 重複送出應被擋下 ---- */
+    $('status').textContent = '測試重複送出…';
+    const dupTry = S.slice(0, Math.min(5, N));
+    let dupBlocked = 0;
+    await Promise.all(dupTry.map(async (s) => {
+      const { error } = await s.db.from('arguments').insert({
+        topic: TOPIC_ID, class_name: cls, seat: s.seat, name: s.name, island: ISLANDS[0], reason: makeReason(s.seat) + '（重複送出測試，不應寫入）',
+      });
+      if (error && error.code === '23505') dupBlocked++;
+    }));
+    addRow('重複送出（同座號再送一次）', dupBlocked, dupTry.length, [],
+      dupBlocked === dupTry.length ? '全部被資料庫擋下，一人只能一則' : '沒有被擋下 → 請先在 Supabase 執行 schema.sql',
+      dupBlocked === dupTry.length ? 'ok' : 'bad');
+
+    /* ---- 5. 老師開放終極投票 ---- */
+    $('status').textContent = '老師開放投票…';
+    const tOpen = now();
+    const up1 = await teacher.from('system_status').upsert(
+      { topic: TOPIC_ID, class_name: cls, voting_open: true, updated_at: new Date().toISOString() }, { onConflict: 'topic,class_name' });
+    if (up1.error) log('❌ 開放投票寫入失敗：' + explainErr(up1.error));
+    const gotOpen = (s) => s.statusLog.find((e) => e.open === true && e.t >= tOpen);
+    await waitUntil(() => connected.every(gotOpen), 10000);
+    const openLat = connected.filter(gotOpen).map((s) => gotOpen(s).t - tOpen);
+    addRow('老師按下「開放投票」→ 學生收到', openLat.length, connected.length, openLat,
+      openLat.length === connected.length ? '所有學生的灰色膠囊會同時展開' : `${connected.length - openLat.length} 位沒有即時收到（靠每 10 秒補抓才會更新）`,
+      levelByLatency(stats(openLat), openLat.length, connected.length, 2000, 5000));
+
+    /* ---- 6. 學生同時投票 ---- */
+    $('status').textContent = '學生投票…';
+    const voteStart = {}, voteLat = [], voteErr = [];
+    await Promise.all(S.map(async (s) => {
+      await sleep(rand(0, Math.min(think, 2000)));
+      voteStart[s.seat] = now();
+      const { error } = await s.db.from('votes').insert({
+        topic: TOPIC_ID, class_name: cls, seat: s.seat, name: s.name, choice: s.seat % 3 === 0 ? DISAGREE : AGREE,
+      });
+      if (error) voteErr.push(explainErr(error)); else { voteLat.push(now() - voteStart[s.seat]); s.voted = true; }
+    }));
+    const voteOk = S.filter((s) => s.voted).length;
+    addRow('學生同時投票（寫入資料庫）', voteOk, N, voteLat,
+      voteOk === N ? '全部寫入成功' : `失敗 ${N - voteOk} 票：${[...new Set(voteErr)].slice(0, 2).join('；')}`,
+      levelByLatency(stats(voteLat), voteOk, N, 1500, 4000));
+    if (teacherOk) {
+      await waitUntil(() => Object.keys(tVoteAt).length >= voteOk, 15000);
+      const vLat = S.filter((s) => s.voted && tVoteAt[s.seat]).map((s) => tVoteAt[s.seat] - voteStart[s.seat]);
+      addRow('老師端即時累計票數（含寫入時間）', vLat.length, voteOk, vLat,
+        vLat.length === voteOk ? '底部票數會即時跳動' : `漏收 ${voteOk - vLat.length} 票（需重新整理才準確）`,
+        levelByLatency(stats(vLat), vLat.length, voteOk, 2000, 5000));
+    }
+
+    /* ---- 7. 定期補抓狀態（每人每 10 秒 3 個查詢；這裡加快為每 3 秒，約 3 倍壓力） ---- */
+    $('status').textContent = '模擬定期補抓狀態…';
+    const pollLat = []; let pollFail = 0, pollTotal = 0;
+    for (let round = 0; round < 3; round++) {
+      await Promise.all(S.map(async (s) => {
+        const t0 = now();
+        const rs = await Promise.all([
+          s.db.from('system_status').select('voting_open').eq('topic', TOPIC_ID).eq('class_name', cls).maybeSingle(),
+          s.db.from('arguments').select('island,reason').eq('topic', TOPIC_ID).eq('class_name', cls).eq('seat', s.seat).order('created_at', { ascending: true }).limit(1),
+          s.db.from('votes').select('choice').eq('topic', TOPIC_ID).eq('class_name', cls).eq('seat', s.seat).order('created_at', { ascending: true }).limit(1),
+        ]);
+        pollTotal++;
+        if (rs.some((r) => r.error)) pollFail++; else pollLat.push(now() - t0);
+      }));
+      await sleep(3000);
+    }
+    addRow('定期補抓狀態（約 3 倍實際頻率，共 3 輪）', pollLat.length, pollTotal, pollLat,
+      pollFail === 0 ? '查詢全部成功，平日輪詢負擔很輕' : `${pollFail} 次失敗`,
+      levelByLatency(stats(pollLat), pollLat.length, pollTotal, 1500, 4000));
+
+    /* ---- 8. 老師清除本班資料 ---- */
+    $('status').textContent = '老師清除資料…';
+    const tClear = now();
+    const wipeRes = await wipe(teacher, cls);
+    const clearMs = now() - tClear;
+    const gotClose = (s) => s.statusLog.find((e) => e.open === false && e.t >= tClear);
+    await waitUntil(() => connected.every(gotClose), 10000);
+    const closeLat = connected.filter(gotClose).map((s) => gotClose(s).t - tClear);
+    addRow('老師清除本班資料（刪除並驗證）', wipeRes.ok ? 1 : 0, 1, [clearMs],
+      wipeRes.ok ? `資料已清空（${N} 則理由 + ${N} 票）` : `沒有刪乾淨（剩 ${wipeRes.left} 筆）→ 請先在 Supabase 執行 schema.sql`,
+      wipeRes.ok ? (clearMs > 5000 ? 'warn' : 'ok') : 'bad');
+    addRow('清除後學生收到通知（自動解鎖）', closeLat.length, connected.length, closeLat,
+      closeLat.length === connected.length ? '學生端會即時解除「已送出」鎖定' : `${connected.length - closeLat.length} 位沒有即時收到（最慢 10 秒內會靠補抓解鎖）`,
+      levelByLatency(stats(closeLat), closeLat.length, connected.length, 2000, 5000));
+
+    /* ---- 總結 ---- */
+    const bad = rows.filter((r) => r.level === 'bad').length;
+    const warn = rows.filter((r) => r.level === 'warn').length;
+    $('verdict').textContent = bad ? `❌ 有 ${bad} 項未通過，請看下表說明`
+      : warn ? `⚠️ 全部可用，但有 ${warn} 項偏慢` : `✅ ${N} 位學生同時操作：全部通過`;
+    $('verdict').style.color = bad ? 'var(--bad)' : warn ? 'var(--warn)' : 'var(--ok)';
+    log('測試完成，測試資料已清除。');
+  } catch (e) {
+    console.error(e);
+    log('❌ 測試中斷：' + (e.message || e));
+    $('verdict').textContent = '❌ 測試中斷：' + (e.message || e);
+    $('verdict').style.color = 'var(--bad)';
+  } finally {
+    for (const [c, ch] of channels) { try { await c.removeChannel(ch); } catch (_) {} }
+    $('status').textContent = '';
+    $('runBtn').disabled = false;
+    $('copyBtn').hidden = false;
+    window.__loadtestDone = true;
+  }
+}
+
+$('runBtn').addEventListener('click', runTest);
+$('copyBtn').addEventListener('click', async () => {
+  const lines = [$('verdict').textContent, ''];
+  rows.forEach((r) => {
+    const st = r.st;
+    lines.push(`${r.level === 'ok' ? '✅' : r.level === 'warn' ? '⚠️' : '❌'} ${r.stage}｜${r.total == null ? '' : r.okN + '/' + r.total}｜中位數 ${st ? fmt(st.p50) : '—'}｜95% ${st ? fmt(st.p95) : '—'}｜最慢 ${st ? fmt(st.max) : '—'}｜${r.note}`);
+  });
+  try { await navigator.clipboard.writeText(lines.join('\n')); $('status').textContent = '已複製'; }
+  catch (_) { $('status').textContent = '無法自動複製，請手動選取表格'; }
+});
+
+document.title = '壓力測試｜' + topicText();
+$('topicInfo').textContent = `目前議題：${topicText()}（TOPIC_ID：${TOPIC_ID}）`;
+if (!CONFIGURED) {
+  $('runBtn').disabled = true;
+  showConfigProblems(PROBLEMS);
+  $('status').textContent = '⚠️ 請先修正 config.js';
+}
+</script>
+</body>
+</html>

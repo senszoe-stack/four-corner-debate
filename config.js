@@ -1,5 +1,5 @@
 /* =====================================================================
- * 四角辯論模板｜設定檔（換議題時，通常只要改這一個檔案）
+ * 四角辯論模板｜設定檔：AI 立法議題（換議題時，通常只要改這一個檔案）
  * ---------------------------------------------------------------------
  * 改完存檔 → 上傳到 GitHub → 等約 1 分鐘 → 網頁按 Ctrl+F5 重新整理。
  * 文字請保留前後的引號 '...'，每一行結尾的逗號也不要刪掉。
@@ -13,13 +13,13 @@ window.DEBATE_CONFIG = {
 
   /* ② 議題代號：每個議題一定要不一樣！只能用英文、數字、- 或 _
        資料庫靠它把不同議題的理由與投票分開。例：'phone-2026'、'school-uniform' */
-  TOPIC_ID: 'power-plant',
+  TOPIC_ID: 'ai-regulation',
 
   /* ③ 辯題：before + highlight + after 會接成一句，highlight 那段會加上螢光筆底線 */
   TOPIC: {
-    before:    '你贊成增建更多',
-    highlight: '電廠',
-    after:     '嗎？',
+    before:    'AI人工智慧的開發應該要由',
+    highlight: '政府立法',
+    after:     '監控管理嗎？',
   },
 
   /* ④ 四個角落（順序：左上、右上、左下、右下）
@@ -28,15 +28,15 @@ window.DEBATE_CONFIG = {
        accent ：主色（淺）／ ink：文字色（深）
        hint   ：學生輸入框的提示文字 */
   ISLANDS: [
-    { key: '非常贊成',   emoji: '🥰', accent: '#7CCBA2', ink: '#2F8F63', hint: '我非常同意，因為……' },
-    { key: '大部分贊成', emoji: '🙂', accent: '#7DB7E8', ink: '#2E78B5', hint: '我大致同意，不過……' },
-    { key: '大部分反對', emoji: '🤔', accent: '#F5A25D', ink: '#B8620F', hint: '我大致反對，因為……' },
-    { key: '非常反對',   emoji: '😤', accent: '#EF8FA6', ink: '#C2506B', hint: '我強烈反對，因為……' },
+    { key: '非常贊成',   emoji: '🥰', accent: '#7CCBA2', ink: '#2F8F63', hint: '我非常贊成政府立法管理 AI，因為……' },
+    { key: '大部分贊成', emoji: '🙂', accent: '#7DB7E8', ink: '#2E78B5', hint: '我大致贊成立法，不過要注意……' },
+    { key: '大部分反對', emoji: '🤔', accent: '#F5A25D', ink: '#B8620F', hint: '我大致反對，因為……（可以怎麼做比較好？）' },
+    { key: '非常反對',   emoji: '😤', accent: '#EF8FA6', ink: '#C2506B', hint: '我強烈反對政府立法管理 AI，因為……' },
   ],
 
   /* ⑤ 終極投票（兩個選項） */
   VOTE: {
-    question:      '🗳️ 終極投票：你贊成嗎？',
+    question:      '🗳️ 終極投票：AI 開發應該由政府立法監管嗎？',
     agree:         '贊成',
     agreeEmoji:    '👍',
     disagree:      '反對',
@@ -48,7 +48,7 @@ window.DEBATE_CONFIG = {
   MAX_REASON: 120,
 
   /* ⑦ 吉祥物：'bulb' = 內建小燈泡；也可以填 shared.js 裡的圖示名稱（如 'tree'），或直接填一個 emoji（如 '📱'） */
-  MASCOT: 'bulb',
+  MASCOT: '🤖',
 
   /* ⑧ 飄浮小圖樣：
        icon  ：內建手繪圖示 plant 發電廠、ac 冷氣、wafer 晶圓、phone 手機、scooter 電動機車、
@@ -58,27 +58,29 @@ window.DEBATE_CONFIG = {
        不想要飄浮圖樣，把陣列清空成 [] 即可。 */
   FLOATERS: {
     teacher: [
-      { icon: 'leopardcat',     pos: 'left:30%;top:11%',     size: 84, op: .95 },
-      { icon: 'cloudedleopard', pos: 'right:30%;top:11%',    size: 84, op: .95 },
-      { icon: 'plant',          pos: 'left:13%;top:36%',     size: 88, op: .95 },
-      { icon: 'ac',             pos: 'right:13%;top:38%',    size: 88, op: .95 },
-      { icon: 'wafer',          pos: 'left:12%;top:55%',     size: 80, op: .9  },
-      { icon: 'phone',          pos: 'right:12%;top:55%',    size: 80, op: .9  },
-      { icon: 'scooter',        pos: 'left:31%;bottom:22%',  size: 84, op: .9  },
-      { icon: 'tree',           pos: 'right:31%;bottom:22%', size: 84, op: .9  },
+      { emoji: '🤖', pos: 'left:30%;top:11%',     size: 80, op: .9 },
+      { emoji: '⚖️', pos: 'right:30%;top:11%',    size: 80, op: .9 },
+      { emoji: '🏛️', pos: 'left:13%;top:36%',     size: 80, op: .9 },
+      { emoji: '💡', pos: 'right:13%;top:38%',    size: 80, op: .9 },
+      { emoji: '🔒', pos: 'left:12%;top:55%',     size: 72, op: .9 },
+      { emoji: '💻', pos: 'right:12%;top:55%',    size: 72, op: .9 },
+      { emoji: '📜', pos: 'left:31%;bottom:22%',  size: 76, op: .9 },
+      { emoji: '🧠', pos: 'right:31%;bottom:22%', size: 76, op: .9 },
     ],
     student: [
-      { icon: 'plant',          pos: 'left:1%;top:12%',  size: 58, op: .8  },
-      { icon: 'wafer',          pos: 'left:1%;top:34%',  size: 54, op: .8  },
-      { icon: 'scooter',        pos: 'left:1%;top:56%',  size: 58, op: .8  },
-      { icon: 'leopardcat',     pos: 'left:1%;top:77%',  size: 58, op: .85 },
-      { icon: 'ac',             pos: 'right:1%;top:18%', size: 58, op: .8  },
-      { icon: 'phone',          pos: 'right:1%;top:40%', size: 52, op: .8  },
-      { icon: 'tree',           pos: 'right:1%;top:62%', size: 58, op: .8  },
-      { icon: 'cloudedleopard', pos: 'right:1%;top:82%', size: 58, op: .85 },
+      { emoji: '🤖', pos: 'left:1%;top:12%',  size: 52, op: .8 },
+      { emoji: '🏛️', pos: 'left:1%;top:34%',  size: 52, op: .8 },
+      { emoji: '🔒', pos: 'left:1%;top:56%',  size: 52, op: .8 },
+      { emoji: '📜', pos: 'left:1%;top:77%',  size: 52, op: .8 },
+      { emoji: '⚖️', pos: 'right:1%;top:18%', size: 52, op: .8 },
+      { emoji: '💡', pos: 'right:1%;top:40%', size: 52, op: .8 },
+      { emoji: '💻', pos: 'right:1%;top:62%', size: 52, op: .8 },
+      { emoji: '🧠', pos: 'right:1%;top:82%', size: 52, op: .8 },
     ],
   },
 
+
+
   /* ⑨ 壓力測試用的假理由（{seat} 會換成座號；長度要大於 MIN_REASON） */
-  TEST_REASON: '這是壓力測試的理由，第 {seat} 號同學認為增建電廠需要同時考慮能源供應與環境影響。',
+  TEST_REASON: '這是壓力測試的理由，第 {seat} 號同學認為 AI 立法要同時考慮創新發展與安全保障。',
 };
