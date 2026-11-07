@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>四角辯論｜教師大螢幕端</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <!-- 議題設定（換議題改這個檔）與共用程式 -->
+  <script src="config.js"></script>
+  <script src="shared.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Huninn&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          keyframes: {
+            bubbleIn: {
+              '0%':   { opacity: '0', transform: 'translateY(14px) scale(.85)' },
+              '60%':  { opacity: '1', transform: 'translateY(-3px) scale(1.03)' },
+              '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+            },
+            toastIn: {
+              '0%':   { opacity: '0', transform: 'translate(-50%, -16px) scale(.9)' },
+              '100%': { opacity: '1', transform: 'translate(-50%, 0) scale(1)' },
+            },
+            bump: {
+              '0%':   { transform: 'scale(1)' },
+              '40%':  { transform: 'scale(1.35)' },
+              '100%': { transform: 'scale(1)' },
+            },
+            breathe: {
+              '0%,100%': { opacity: '.6' },
+              '50%':     { opacity: '1' },
+            },
+            float: {
+              '0%,100%': { transform: 'translateY(0) rotate(-4deg)' },
+              '50%':     { transform: 'translateY(-14px) rotate(4deg)' },
+            },
+            bob: {
+              '0%,100%': { transform: 'translateY(0)' },
+              '50%':     { transform: 'translateY(-8px)' },
+            },
+          },
+          animation: {
+            'bubble-in': 'bubbleIn .6s cubic-bezier(.34,1.56,.64,1) both',
+            'toast-in':  'toastIn .45s cubic-bezier(.34,1.56,.64,1) both',
+            'bump':      'bump .45s ease-out',
+            'breathe':   'breathe 2.4s ease-in-out infinite',
+            'float':     'float 5s ease-in-out infinite',
+            'bob':       'bob 2.6s ease-in-out infinite',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    body {
+      font-family: 'Huninn', 'Noto Sans TC', system-ui, sans-serif;
+      color: #5B4B63;
+      background:
+        radial-gradient(900px 600px at 12% 8%,  #F4BFCB 0%, transparent 60%),
+        radial-gradient(900px 600px at 90% 8%,  #B7D3F0 0%, transparent 60%),
+        radial-gradient(900px 600px at 88% 92%, #B5DEC6 0%, transparent 60%),
+        radial-gradient(900px 600px at 10% 92%, #F5C99B 0%, transparent 60%),
+        #EAD7BC;
+    }
+    /* 淡淡的圓點底紋 */
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image: radial-gradient(#D2B48F 2px, transparent 2.5px);
+      background-size: 30px 30px; opacity: .5;
+    }
+
+    /* ===== 動態島：寬度與高度平滑展開 ===== */
+    .island { width: 13.5rem; transition: width .75s cubic-bezier(.22, 1, .36, 1); }
+    .island.open { width: min(28vw, 26rem); }
+
+    .island-shell {
+      background: rgba(255, 255, 255, .96);
+      border: 3px solid var(--accent);
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 10px 28px rgba(120, 90, 110, .18), 0 0 0 0 var(--accent-glow);
+    }
+    .island.pulse .island-shell { animation: islandPulse 1.1s ease-out; }
+    @keyframes islandPulse {
+      0%   { box-shadow: 0 10px 28px rgba(120,90,110,.18), 0 0 0 0 var(--accent-glow); }
+      100% { box-shadow: 0 10px 28px rgba(120,90,110,.18), 0 0 0 26px transparent; }
+    }
+
+    /* grid-rows 0fr → 1fr：讓未知高度的內容也能平滑展開 */
+    .island-body {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transition: grid-template-rows .75s cubic-bezier(.22, 1, .36, 1), opacity .5s ease;
+    }
+    .island.open .island-body { grid-template-rows: 1fr; opacity: 1; }
+    .island-inner { overflow: hidden; min-height: 0; }
+
+    .island .chev { transition: transform .5s ease; }
+    .island.open .chev { transform: rotate(180deg); }
+
+    .bubble-list { max-height: 32vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(91,75,99,.25) transparent; }
+    .bump-anim { animation: bump .45s ease-out; }
+    .hl { background: linear-gradient(transparent 62%, #FFD6A5 62%); padding: 0 .25rem; }
+  </style>
+</head>
+
+<body class="h-screen overflow-hidden select-none">
+
+  <!-- 設定提醒 -->
+  <div id="configWarn" class="hidden fixed top-0 inset-x-0 z-50 bg-amber-300 text-[#5B4B63] text-center font-bold py-2">
+    ⚠️ 設定有問題，請編輯 config.js。
+  </div>
+
+  <!-- 飄浮的可愛小圖樣（由 JS 放入） -->
+  <div id="floatHost" class="fixed inset-0 z-0 pointer-events-none overflow-hidden" aria-hidden="true"></div>
+
+  <!-- 頂部：班級設定 -->
+  <div class="fixed top-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-white/90 rounded-full pl-5 pr-2 py-2 border-2 border-[#E6C7A6] shadow-lg shadow-orange-300/40">
+    <span class="text-[#5B4B63]/60 text-sm whitespace-nowrap">🏫 目前班級</span>
+    <input id="classInput" list="classList" autocomplete="off" placeholder="例：一年一班"
+           class="bg-transparent outline-none w-40 text-lg font-bold text-center placeholder-[#5B4B63]/30" />
+    <datalist id="classList"></datalist>
+    <button id="setClassBtn"
+            class="rounded-full bg-[#7DB7E8] text-white px-5 py-1.5 font-bold hover:brightness-105 active:scale-95 transition">設定</button>
+  </div>
+
+  <!-- 中央舞台 -->
+  <main class="absolute inset-0 z-10 flex flex-col items-center justify-center text-center pointer-events-none px-4 pb-10">
+    <!-- 吉祥物（config.js 的 MASCOT） -->
+    <div data-mascot="110" class="w-28 h-32 animate-bob drop-shadow-lg" aria-hidden="true"></div>
+
+    <h1 id="topicTitle" class="mt-3 text-5xl lg:text-6xl font-black leading-tight max-w-3xl text-[#5B4B63]"></h1>
+
+    <p id="classLabel" class="mt-6 px-7 py-2 rounded-full bg-white/85 border-2 border-[#E6C7A6] text-2xl font-bold shadow-md shadow-orange-300/40">尚未設定班級</p>
+
+    <div id="voteChip" class="mt-5 px-6 py-2 rounded-full border-2 border-[#E5DDEA] bg-white/70 text-[#5B4B63]/60 text-lg transition-all duration-700">
+      🔒 終極投票：未開放
+    </div>
+  </main>
+
+  <!-- 四個角落的動態島（由 JS 產生） -->
+  <div id="islandHost" class="relative z-20"></div>
+
+  <!-- 底部控制面板 -->
+  <footer class="fixed bottom-0 inset-x-0 h-24 z-30 bg-white/85 backdrop-blur-xl border-t-2 border-[#E6C7A6] flex items-center justify-between px-6 lg:px-10">
+    <div class="flex items-center gap-2 text-[#5B4B63]/60 w-36">
+      <span id="connDot" class="w-2.5 h-2.5 rounded-full bg-neutral-400"></span>
+      <span id="connText" class="text-sm">尚未連線</span>
+    </div>
+
+    <div class="flex items-center gap-6 lg:gap-10">
+      <button id="toggleVoteBtn" disabled
+              class="rounded-full px-7 py-3.5 text-lg font-black shadow-lg text-[#4A3F55] bg-[#8FD6B1] shadow-emerald-300/50
+                     hover:brightness-105 active:scale-95 transition-all duration-500 disabled:opacity-40 disabled:cursor-not-allowed">
+        開放終極投票
+      </button>
+
+      <div class="flex items-end gap-5 lg:gap-8">
+        <div class="flex items-baseline gap-2">
+          <span id="agreeLabel" class="text-xl font-bold text-[#5B4B63]/70">👍 贊成</span>
+          <span id="agreeCount" class="text-5xl font-black tabular-nums inline-block" style="color:#2F8F63">0</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="disagreeLabel" class="text-xl font-bold text-[#5B4B63]/70">👎 反對</span>
+          <span id="disagreeCount" class="text-5xl font-black tabular-nums inline-block" style="color:#C2506B">0</span>
+        </div>
+        <div class="text-[#5B4B63]/50 text-lg pb-1">共 <span id="totalCount" class="tabular-nums">0</span> 票</div>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3">
+      <button id="clearBtn" disabled
+              class="rounded-full px-4 py-3 font-bold bg-[#FDE3E8] text-[#A63D58] border-2 border-[#F4A3B6] shadow-md shadow-pink-300/40 hover:brightness-105 active:scale-95 transition
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        🧹 清除本班資料
+      </button>
+      <button id="exportBtn" disabled
+              class="rounded-full px-4 py-3 font-bold bg-white border-2 border-[#E6C7A6] shadow-md shadow-orange-300/40 hover:bg-[#FFF1E2] active:scale-95 transition
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        📊 匯出 Excel成果
+      </button>
+    </div>
+  </footer>
+
+  <!-- 清除確認視窗 -->
+  <div id="clearModal" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0 flex items-center justify-center px-5 bg-[#4A3B52]/45">
+      <div class="w-full max-w-lg bg-white rounded-[2rem] border-2 border-[#F4A3B6] p-7 shadow-2xl animate-bubble-in">
+        <h3 class="text-2xl font-black text-[#A63D58]">🧹 清除「<span id="clearClassName"></span>」的資料？</h3>
+        <p class="mt-3 text-lg">將會刪除：</p>
+        <ul class="mt-2 text-lg space-y-1">
+          <li>・理由 <b id="clearArgN">0</b> 則</li>
+          <li>・投票 <b id="clearVoteN">0</b> 票</li>
+          <li>・並關閉終極投票，學生可以重新填寫</li>
+        </ul>
+        <p class="mt-4 text-[#A63D58] font-bold">⚠️ 清除後無法復原，建議先匯出 Excel。</p>
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button id="clearCancelBtn" class="rounded-full px-5 py-3 font-bold bg-[#F1ECF4] hover:bg-[#E6DDEC] active:scale-95 transition">取消</button>
+          <button id="clearExportBtn" class="rounded-full px-5 py-3 font-bold bg-white border-2 border-[#E6C7A6] hover:bg-[#FFF1E2] active:scale-95 transition">📊 先匯出 Excel</button>
+          <button id="clearConfirmBtn" class="rounded-full px-6 py-3 font-black bg-[#F4A3B6] text-[#4A3F55] shadow-md shadow-pink-300/50 hover:brightness-105 active:scale-95 transition disabled:opacity-50">確定清除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed top-24 left-1/2 z-50 px-6 py-3 rounded-full bg-white border-2 border-[#E6C7A6] text-lg font-bold shadow-xl"></div>
+
+<script>
+/* =====================================================================
+ * 教師大螢幕端｜所有議題內容都在 config.js，這裡一般不需要修改
+ * ===================================================================== */
+const CFG = window.DEBATE_CONFIG;
+const PROBLEMS = validateConfig(CFG);
+const CONFIGURED = PROBLEMS.length === 0;
+const db = CONFIGURED ? supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY) : null;
+
+const TOPIC_ID = CFG.TOPIC_ID;
+const AGREE = CFG.VOTE.agree;
+const DISAGREE = CFG.VOTE.disagree;
+const emptyCounts = () => ({ [AGREE]: 0, [DISAGREE]: 0 });
+
+const $ = (id) => document.getElementById(id);
+
+/* 四個角落的島：左上、右上、左下、右下（內容來自 config.js） */
+const POS = ['top-6 left-6', 'top-6 right-6', 'bottom-28 left-6', 'bottom-28 right-6'];
+const ISLANDS = CFG.ISLANDS.slice(0, 4).map((isl, i) => ({ ...isl, pos: POS[i] }));
+
+/* ---------- 狀態 ---------- */
+let currentClass = '';
+let channel = null;
+let votingOpen = false;
+let voteCounts = emptyCounts();
+const seenArgIds = new Set();
+const islandRefs = {};   // key -> { root, list, countEl, n }
+
+/* ---------- 小工具 ---------- */
+function toast(msg, ms = 2600) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden', 'animate-toast-in');
+  void t.offsetWidth;
+  t.classList.add('animate-toast-in');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.add('hidden'), ms);
+}
+
+function setConn(state) {
+  const dot = $('connDot'), txt = $('connText');
+  dot.className = 'w-2.5 h-2.5 rounded-full';
+  if (state === 'ok')       { dot.classList.add('bg-emerald-400', 'animate-breathe'); txt.textContent = '即時連線中'; }
+  else if (state === 'err') { dot.classList.add('bg-rose-400');   txt.textContent = '連線異常，嘗試重連…'; }
+  else                      { dot.classList.add('bg-neutral-400'); txt.textContent = '尚未連線'; }
+}
+
+function bump(el) {
+  el.classList.remove('bump-anim');
+  void el.offsetWidth;
+  el.classList.add('bump-anim');
+}
+
+/* ---------- 建立四個動態島 ---------- */
+function buildIslands() {
+  const host = $('islandHost');
+  ISLANDS.forEach((isl) => {
+    const root = document.createElement('div');
+    root.className = `island fixed ${isl.pos} z-20`;
+    root.style.setProperty('--accent', isl.accent);
+    root.style.setProperty('--accent-glow', isl.accent + '99');
+
+    root.innerHTML = `
+      <div class="island-shell">
+        <button type="button" class="island-head w-full h-14 flex items-center gap-3 px-4 text-left">
+          <span class="text-2xl leading-none">${esc(isl.emoji)}</span>
+          <span class="font-black text-xl" style="color:${esc(isl.ink)}">${esc(isl.key)}</span>
+          <span class="count ml-auto min-w-[2rem] text-center rounded-full px-2.5 py-0.5 text-base font-black text-[#4A3F55] tabular-nums" style="background:${esc(isl.accent)}">0</span>
+          <svg class="chev w-5 h-5 text-[#5B4B63]/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="island-body">
+          <div class="island-inner">
+            <div class="bubble-list px-3 pb-3 pt-1 flex flex-col gap-2.5"></div>
+          </div>
+        </div>
+      </div>`;
+
+    host.appendChild(root);
+    const ref = {
+      root,
+      list: root.querySelector('.bubble-list'),
+      countEl: root.querySelector('.count'),
+      n: 0,
+    };
+    root.querySelector('.island-head').addEventListener('click', () => root.classList.toggle('open'));
+    islandRefs[isl.key] = ref;
+  });
+}
+
+function resetIslands() {
+  Object.values(islandRefs).forEach((r) => {
+    r.list.innerHTML = '';
+    r.n = 0;
+    r.countEl.textContent = '0';
+    r.root.classList.remove('open', 'pulse');
+  });
+  seenArgIds.clear();
+}
+
+/* 新增氣泡卡片：格式 [座號] 姓名：理由 */
+function addBubble(row, live) {
+  const isl = ISLANDS.find((i) => i.key === row.island);
+  const ref = islandRefs[row.island];
+  if (!isl || !ref) return;
+
+  const b = document.createElement('div');
+  b.className = 'bubble animate-bubble-in rounded-3xl px-4 py-3 text-lg leading-snug break-words';
+  b.style.background = isl.accent + '30';
+  b.style.border = `2px solid ${isl.accent}`;
+
+  const who = document.createElement('span');
+  who.className = 'font-black';
+  who.style.color = isl.ink;
+  who.textContent = `[${row.seat}] ${row.name}：`;
+
+  const why = document.createElement('span');
+  why.style.color = '#4A3F55';
+  why.textContent = row.reason;
+
+  b.append(who, why);
+  ref.list.appendChild(b);
+
+  ref.n += 1;
+  ref.countEl.textContent = String(ref.n);
+  bump(ref.countEl);
+
+  ref.root.classList.add('open');
+  if (live) {
+    ref.root.classList.remove('pulse');
+    void ref.root.offsetWidth;
+    ref.root.classList.add('pulse');
+  }
+  ref.list.scrollTo({ top: ref.list.scrollHeight, behavior: live ? 'smooth' : 'auto' });
+}
+
+/* 只接受「本議題 + 本班」的資料 */
+const mine = (row) => row && row.topic === TOPIC_ID && row.class_name === currentClass;
+
+function onArgument(row, live = true) {
+  if (!mine(row)) return;
+  if (seenArgIds.has(row.id)) return;
+  seenArgIds.add(row.id);
+  addBubble(row, live);
+}
+
+/* ---------- 投票數 ---------- */
+function renderVoteCounts(animate = false) {
+  const a = voteCounts[AGREE], d = voteCounts[DISAGREE];
+  $('agreeCount').textContent = a;
+  $('disagreeCount').textContent = d;
+  $('totalCount').textContent = a + d;
+  if (animate) { bump($('agreeCount')); bump($('disagreeCount')); }
+}
+
+/* ---------- 投票開關 UI ---------- */
+const BTN_BASE = 'rounded-full px-7 py-3.5 text-lg font-black shadow-lg text-[#4A3F55] hover:brightness-105 active:scale-95 transition-all duration-500 disabled:opacity-40 disabled:cursor-not-allowed ';
+
+function renderVotingUI() {
+  const btn = $('toggleVoteBtn'), chip = $('voteChip');
+  btn.disabled = !currentClass;
+  if (votingOpen) {
+    btn.textContent = '關閉終極投票';
+    btn.className = BTN_BASE + 'bg-[#F4A3B6] shadow-pink-300/50';
+    chip.textContent = '🗳️ 終極投票：開放中';
+    chip.className = 'mt-5 px-6 py-2 rounded-full border-2 border-[#7CCBA2] bg-[#DDF3E8] text-[#2F8F63] text-lg font-bold transition-all duration-700 animate-breathe';
+  } else {
+    btn.textContent = '開放終極投票';
+    btn.className = BTN_BASE + 'bg-[#8FD6B1] shadow-emerald-300/50';
+    chip.textContent = '🔒 終極投票：未開放';
+    chip.className = 'mt-5 px-6 py-2 rounded-full border-2 border-[#E5DDEA] bg-white/70 text-[#5B4B63]/60 text-lg transition-all duration-700';
+  }
+}
+
+function statusRow(cls, open) {
+  return { topic: TOPIC_ID, class_name: cls, voting_open: open, updated_at: new Date().toISOString() };
+}
+
+async function toggleVoting() {
+  if (!db || !currentClass) return;
+  const next = !votingOpen;
+  const prev = votingOpen;
+  votingOpen = next;
+  renderVotingUI();
+
+  const { error } = await db.from('system_status').upsert(statusRow(currentClass, next), { onConflict: 'topic,class_name' });
+  if (error) {
+    votingOpen = prev;
+    renderVotingUI();
+    toast('更新失敗：' + explainErr(error), 4200);
+    return;
+  }
+  toast(next ? '✅ 已開放終極投票' : '🔒 已關閉終極投票');
+}
+
+/* ---------- 設定班級 + Realtime 訂閱 ---------- */
+async function setClass(name) {
+  name = (name || '').trim();
+  if (!name) { toast('請輸入班級名稱'); return; }
+  if (!db) { toast('請先修正 config.js 的設定'); return; }
+
+  currentClass = name;
+  localStorage.setItem('debate_teacher_class', name);
+  $('classInput').value = name;
+  $('classLabel').textContent = '🏫 ' + name;
+  $('exportBtn').disabled = false;
+  $('clearBtn').disabled = false;
+
+  resetIslands();
+  voteCounts = emptyCounts();
+  votingOpen = false;
+  renderVoteCounts();
+  renderVotingUI();
+
+  await subscribeClass(name);
+  await loadClassData(name);
+}
+
+async function subscribeClass(cls) {
+  if (channel) { await db.removeChannel(channel); channel = null; }
+  // Realtime 只能用一個欄位篩選，所以先篩班級，再在程式裡篩議題
+  const filter = `class_name=eq.${cls}`;
+
+  channel = db.channel('teacher-' + Date.now())
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'arguments', filter },
+      (p) => onArgument(p.new, true))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'votes', filter },
+      (p) => {
+        if (!mine(p.new)) return;
+        if (voteCounts[p.new.choice] === undefined) return;
+        voteCounts[p.new.choice] += 1;
+        renderVoteCounts(true);
+      })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'system_status', filter },
+      (p) => {
+        if (!mine(p.new)) return;
+        votingOpen = !!p.new.voting_open;
+        renderVotingUI();
+      })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') setConn('ok');
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setConn('err');
+      else if (status === 'CLOSED') setConn('off');
+    });
+}
+
+async function loadClassData(cls) {
+  const [a, v, s] = await Promise.all([
+    db.from('arguments').select('*').eq('topic', TOPIC_ID).eq('class_name', cls).order('created_at', { ascending: true }),
+    db.from('votes').select('choice').eq('topic', TOPIC_ID).eq('class_name', cls),
+    db.from('system_status').select('*').eq('topic', TOPIC_ID).eq('class_name', cls).maybeSingle(),
+  ]);
+  if (cls !== currentClass) return; // 期間已切換班級
+
+  if (a.error) toast('讀取理由失敗：' + explainErr(a.error), 5000);
+  else (a.data || []).forEach((row) => onArgument(row, false));
+
+  if (v.error) toast('讀取投票失敗：' + explainErr(v.error), 5000);
+  else {
+    voteCounts = emptyCounts();
+    (v.data || []).forEach((r) => { if (voteCounts[r.choice] !== undefined) voteCounts[r.choice] += 1; });
+    renderVoteCounts();
+  }
+
+  votingOpen = !!(s.data && s.data.voting_open);
+  renderVotingUI();
+}
+
+/* ---------- 匯出 Excel（含圓餅圖） ---------- */
+function drawPieDataURL(agree, disagree, title, subtitle) {
+  const W = 720, H = 480;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, W, H);
+
+  g.fillStyle = '#111827';
+  g.font = 'bold 26px "Noto Sans TC", sans-serif';
+  g.textAlign = 'center';
+  g.fillText(title, W / 2, 40, W - 40);
+  g.fillStyle = '#6b7280';
+  g.font = '20px "Noto Sans TC", sans-serif';
+  g.fillText(subtitle, W / 2, 70, W - 40);
+
+  const total = agree + disagree;
+  const cx = 230, cy = 285, r = 160;
+  const slices = [
+    { label: AGREE,    v: agree,    color: '#10b981' },
+    { label: DISAGREE, v: disagree, color: '#f43f5e' },
+  ];
+
+  if (total === 0) {
+    g.fillStyle = '#e5e7eb';
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#6b7280';
+    g.font = 'bold 28px "Noto Sans TC", sans-serif';
+    g.fillText('尚無投票', cx, cy + 10);
+  } else {
+    let start = -Math.PI / 2;
+    slices.forEach((s) => {
+      if (s.v === 0) return;
+      const ang = (s.v / total) * Math.PI * 2;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.arc(cx, cy, r, start, start + ang);
+      g.closePath();
+      g.fillStyle = s.color;
+      g.fill();
+      g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke();
+
+      const mid = start + ang / 2;
+      const lx = cx + Math.cos(mid) * r * (s.v === total ? 0 : 0.6);
+      const ly = cy + Math.sin(mid) * r * (s.v === total ? 0 : 0.6);
+      g.fillStyle = '#ffffff';
+      g.font = 'bold 28px "Noto Sans TC", sans-serif';
+      g.textAlign = 'center';
+      g.fillText(Math.round((s.v / total) * 100) + '%', lx, ly + 10);
+      start += ang;
+    });
+  }
+
+  // 圖例
+  g.textAlign = 'left';
+  slices.forEach((l, i) => {
+    const y = 210 + i * 60;
+    g.fillStyle = l.color;
+    g.fillRect(440, y, 30, 30);
+    g.fillStyle = '#111827';
+    g.font = 'bold 24px "Noto Sans TC", sans-serif';
+    const pct = total ? Math.round((l.v / total) * 100) : 0;
+    g.fillText(`${l.label}：${l.v} 票 (${pct}%)`, 482, y + 25, W - 492);
+  });
+  g.fillStyle = '#6b7280';
+  g.font = '22px "Noto Sans TC", sans-serif';
+  g.fillText(`總票數：${total}`, 440, 350);
+
+  return c.toDataURL('image/png');
+}
+
+function styleHeaderRow(row, from, to) {
+  for (let i = from; i <= to; i++) {
+    const cell = row.getCell(i);
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  }
+  row.height = 24;
+}
+
+/* 檔名不能有 \ / : * ? " < > | */
+const safeName = (s) => String(s).replace(/[\\/:*?"<>|？：]/g, '').slice(0, 40);
+
+async function exportExcel() {
+  if (!db || !currentClass) { toast('請先設定班級'); return; }
+  const btn = $('exportBtn');
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '匯出中…';
+
+  try {
+    const [a, v] = await Promise.all([
+      db.from('arguments').select('*').eq('topic', TOPIC_ID).eq('class_name', currentClass).order('created_at', { ascending: true }),
+      db.from('votes').select('*').eq('topic', TOPIC_ID).eq('class_name', currentClass).order('seat', { ascending: true }),
+    ]);
+    if (a.error) throw a.error;
+    if (v.error) throw v.error;
+
+    const args = a.data || [];
+    const votes = v.data || [];
+    const agree = votes.filter((x) => x.choice === AGREE).length;
+    const disagree = votes.filter((x) => x.choice === DISAGREE).length;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = '四角辯論';
+    wb.created = new Date();
+
+    /* 工作表 1：論點 */
+    const ws1 = wb.addWorksheet('論點');
+    ws1.columns = [
+      { header: '班級',     key: 'class_name', width: 14 },
+      { header: '座號',     key: 'seat',       width: 8 },
+      { header: '姓名',     key: 'name',       width: 14 },
+      { header: '選擇的島', key: 'island',     width: 14 },
+      { header: '理由',     key: 'reason',     width: 80 },
+    ];
+    args.forEach((r) => ws1.addRow({
+      class_name: r.class_name, seat: r.seat, name: r.name, island: r.island, reason: r.reason,
+    }));
+    styleHeaderRow(ws1.getRow(1), 1, 5);
+    ws1.eachRow((row, n) => {
+      if (n === 1) return;
+      row.alignment = { vertical: 'top', wrapText: true };
+      row.getCell(2).alignment = { vertical: 'top', horizontal: 'center' };
+    });
+    ws1.views = [{ state: 'frozen', ySplit: 1 }];
+
+    /* 工作表 2：投票（明細 + 統計 + 圓餅圖） */
+    const ws2 = wb.addWorksheet('投票');
+    ws2.columns = [
+      { header: '班級', key: 'class_name', width: 14 },
+      { header: '座號', key: 'seat',       width: 8 },
+      { header: '姓名', key: 'name',       width: 14 },
+      { header: '選項', key: 'choice',     width: 10 },
+      { header: '',     key: 'gap',        width: 4 },
+      { header: '',     key: 'k',          width: 14 },
+      { header: '',     key: 'v',          width: 12 },
+    ];
+    votes.forEach((r) => ws2.addRow({
+      class_name: r.class_name, seat: r.seat, name: r.name, choice: r.choice,
+    }));
+    styleHeaderRow(ws2.getRow(1), 1, 4);
+
+    ws2.getCell('F1').value = '項目';
+    ws2.getCell('G1').value = '票數';
+    styleHeaderRow(ws2.getRow(1), 6, 7);
+    ws2.getRow(1).height = 24;
+    ws2.getCell('F2').value = AGREE;    ws2.getCell('G2').value = agree;
+    ws2.getCell('F3').value = DISAGREE; ws2.getCell('G3').value = disagree;
+    ws2.getCell('F4').value = '總計';   ws2.getCell('G4').value = agree + disagree;
+    ['F4', 'G4'].forEach((k) => { ws2.getCell(k).font = { bold: true }; });
+    ws2.getColumn(7).alignment = { horizontal: 'center' };
+
+    const dataUrl = drawPieDataURL(agree, disagree, topicText(), `${currentClass}｜終極投票結果`);
+    const imgId = wb.addImage({ base64: dataUrl.split(',')[1], extension: 'png' });
+    ws2.addImage(imgId, { tl: { col: 5, row: 5 }, ext: { width: 720, height: 480 } });
+
+    /* 工作表 3：議題資訊 */
+    const ws3 = wb.addWorksheet('議題');
+    ws3.columns = [{ width: 12 }, { width: 60 }];
+    ws3.addRow(['辯題', topicText()]);
+    ws3.addRow(['議題代號', TOPIC_ID]);
+    ws3.addRow(['班級', currentClass]);
+    ws3.addRow(['匯出時間', new Date().toLocaleString('zh-TW', { hour12: false })]);
+    ws3.getColumn(1).font = { bold: true };
+
+    /* 下載 */
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const a$ = document.createElement('a');
+    a$.href = URL.createObjectURL(blob);
+    a$.download = `四角辯論_${safeName(topicText())}_${safeName(currentClass)}_${stamp}.xlsx`;
+    document.body.appendChild(a$);
+    a$.click();
+    a$.remove();
+    setTimeout(() => URL.revokeObjectURL(a$.href), 4000);
+    toast('📄 Excel 已匯出');
+  } catch (e) {
+    console.error(e);
+    toast('匯出失敗：' + explainErr(e), 4200);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+}
+
+/* ---------- 清除本班資料（只清本議題） ---------- */
+function openClearModal() {
+  if (!currentClass) return;
+  $('clearClassName').textContent = currentClass;
+  $('clearArgN').textContent = seenArgIds.size;
+  $('clearVoteN').textContent = voteCounts[AGREE] + voteCounts[DISAGREE];
+  $('clearModal').classList.remove('hidden');
+}
+function closeClearModal() { $('clearModal').classList.add('hidden'); }
+
+async function clearClass() {
+  if (!db || !currentClass) return;
+  const cls = currentClass;
+  const btn = $('clearConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '清除中…';
+
+  try {
+    const r1 = await db.from('arguments').delete().eq('topic', TOPIC_ID).eq('class_name', cls);
+    if (r1.error) throw r1.error;
+    const r2 = await db.from('votes').delete().eq('topic', TOPIC_ID).eq('class_name', cls);
+    if (r2.error) throw r2.error;
+
+    // 沒有 delete 權限時 Supabase 不會報錯，只是刪不掉，所以要再數一次確認
+    const [ca, cv] = await Promise.all([
+      db.from('arguments').select('id', { count: 'exact', head: true }).eq('topic', TOPIC_ID).eq('class_name', cls),
+      db.from('votes').select('id', { count: 'exact', head: true }).eq('topic', TOPIC_ID).eq('class_name', cls),
+    ]);
+    if ((ca.count || 0) > 0 || (cv.count || 0) > 0) {
+      throw new Error('資料沒有被刪除，請先在 Supabase 執行 schema.sql（開放刪除權限）');
+    }
+
+    // 關閉終極投票；這個更新也會即時通知學生端，讓他們解除「已送出」的鎖定
+    const r3 = await db.from('system_status').upsert(statusRow(cls, false), { onConflict: 'topic,class_name' });
+    if (r3.error) throw r3.error;
+
+    if (cls === currentClass) {
+      resetIslands();
+      voteCounts = emptyCounts();
+      votingOpen = false;
+      renderVoteCounts();
+      renderVotingUI();
+    }
+    closeClearModal();
+    toast('🧹 已清除「' + cls + '」的資料');
+  } catch (e) {
+    console.error(e);
+    toast('清除失敗：' + explainErr(e), 4200);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '確定清除';
+  }
+}
+
+/* ---------- 初始化 ---------- */
+function init() {
+  document.title = topicText() + '｜教師大螢幕端';
+  renderTopicInto($('topicTitle'));
+  renderMascots();
+  $('agreeLabel').textContent = `${CFG.VOTE.agreeEmoji || ''} ${AGREE}`.trim();
+  $('disagreeLabel').textContent = `${CFG.VOTE.disagreeEmoji || ''} ${DISAGREE}`.trim();
+  $('classList').innerHTML = classOptionsHTML();
+
+  buildIslands();
+  renderVotingUI();
+  renderVoteCounts();
+
+  $('setClassBtn').addEventListener('click', () => setClass($('classInput').value));
+  $('classInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') setClass(e.target.value); });
+  $('toggleVoteBtn').addEventListener('click', toggleVoting);
+  $('exportBtn').addEventListener('click', exportExcel);
+  $('clearBtn').addEventListener('click', openClearModal);
+  $('clearCancelBtn').addEventListener('click', closeClearModal);
+  $('clearExportBtn').addEventListener('click', exportExcel);
+  $('clearConfirmBtn').addEventListener('click', clearClass);
+
+  renderFloaters((CFG.FLOATERS || {}).teacher);
+
+  if (!CONFIGURED) {
+    showConfigProblems(PROBLEMS);
+    return;
+  }
+  const saved = localStorage.getItem('debate_teacher_class');
+  if (saved) setClass(saved);
+}
+
+init();
+</script>
+</body>
+</html>
